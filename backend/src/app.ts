@@ -7,6 +7,13 @@ import dotenv from "dotenv";
 // Load environment variables from .env file
 dotenv.config();
 
+// Log environment variables (without sensitive data)
+console.log('Environment loaded:', {
+  hasApiKey: !!process.env.SHOPIFY_API_KEY,
+  hasApiSecret: !!process.env.SHOPIFY_API_SECRET,
+  hostName: process.env.SHOPIFY_HOST_NAME
+});
+
 const shopify = shopifyApi({
   apiKey: process.env.SHOPIFY_API_KEY || "",
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
@@ -23,50 +30,75 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Error handling middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Error:', err);
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: err.message
+  });
+});
+
 // Basic test route
 app.get("/", (req, res) => {
-  const shop = req.query.shop;
-  if (shop) {
-    // If shop parameter exists, redirect to auth
-    return res.redirect(`/auth?shop=${shop}`);
-  }
-  res.json({
-    message: "Shopify Discount Popup API is running",
-    status: "ok",
-    endpoints: {
-      auth: "/auth",
-      callback: "/auth/callback",
-      discounts: "/discounts"
+  try {
+    const shop = req.query.shop;
+    if (shop) {
+      console.log('Redirecting to auth with shop:', shop);
+      return res.redirect(`/auth?shop=${shop}`);
     }
-  });
+    res.json({
+      message: "Shopify Discount Popup API is running",
+      status: "ok",
+      endpoints: {
+        auth: "/auth",
+        callback: "/auth/callback",
+        discounts: "/discounts"
+      }
+    });
+  } catch (error) {
+    console.error('Error in root route:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
 // Shopify OAuth routes
 app.get("/auth", async (req, res) => {
-  const shop = req.query.shop as string;
-  if (!shop) {
-    return res.status(400).send("Missing shop parameter.");
-  }
+  try {
+    const shop = req.query.shop as string;
+    console.log('Auth request for shop:', shop);
+    
+    if (!shop) {
+      return res.status(400).send("Missing shop parameter.");
+    }
 
-  const authRoute = await shopify.auth.begin({
-    shop,
-    callbackPath: "/auth/callback",
-    isOnline: false,
-    rawRequest: req,
-  });
-  return res.redirect(authRoute);
+    const authRoute = await shopify.auth.begin({
+      shop,
+      callbackPath: "/auth/callback",
+      isOnline: false,
+      rawRequest: req,
+    });
+    console.log('Auth route generated:', authRoute);
+    return res.redirect(authRoute);
+  } catch (error) {
+    console.error('Error in auth route:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    res.status(500).json({ error: 'Authentication failed', details: errorMessage });
+  }
 });
 
 app.get("/auth/callback", async (req, res) => {
   try {
+    console.log('Callback received with query:', req.query);
+    
     const callback = await shopify.auth.callback({
       rawRequest: req,
       rawResponse: res,
     });    
-    const session = callback.session;
-    console.log(`Authenticated with shop: ${session.shop}`);
     
-    // After successful authentication, redirect to the app's main page
+    const session = callback.session;
+    console.log('Authentication successful for shop:', session.shop);
+    
     res.send(`
       <html>
         <head>
@@ -120,8 +152,48 @@ app.get("/auth/callback", async (req, res) => {
       </html>
     `);
   } catch (error) {
-    console.error(error);
-    res.status(500).send("Authentication failed.");
+    console.error('Error in callback route:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    res.status(500).send(`
+      <html>
+        <head>
+          <title>Installation Failed</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              height: 100vh;
+              margin: 0;
+              background-color: #f6f6f7;
+            }
+            .container {
+              text-align: center;
+              padding: 2rem;
+              background: white;
+              border-radius: 8px;
+              box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            h1 {
+              color: #d82c0d;
+              margin-bottom: 1rem;
+            }
+            p {
+              color: #637381;
+              margin-bottom: 1rem;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>Installation Failed</h1>
+            <p>There was an error installing the app. Please try again.</p>
+            <p>Error details: ${errorMessage}</p>
+          </div>
+        </body>
+      </html>
+    `);
   }
 });
 
