@@ -67,12 +67,21 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // Basic route
 app.get("/", (req, res) => {
-  console.log('Root route accessed');
-  const shop = req.query.shop as string;
+  console.log('Root route accessed with query:', req.query);
+  const { shop, hmac, host, timestamp } = req.query;
   
   if (shop) {
     console.log('Redirecting to auth with shop:', shop);
-    return res.redirect(`/auth?shop=${shop}`);
+    // Preserve all Shopify parameters
+    const params = new URLSearchParams();
+    if (shop) params.append('shop', shop as string);
+    if (hmac) params.append('hmac', hmac as string);
+    if (host) params.append('host', host as string);
+    if (timestamp) params.append('timestamp', timestamp as string);
+    
+    const redirectUrl = `/auth?${params.toString()}`;
+    console.log('Redirecting to:', redirectUrl);
+    return res.redirect(redirectUrl);
   }
   
   res.json({ 
@@ -91,8 +100,8 @@ app.get("/", (req, res) => {
 // Auth route
 app.get("/auth", async (req, res) => {
   try {
-    const shop = req.query.shop as string;
-    console.log('Auth request received for shop:', shop);
+    const { shop, hmac, host, timestamp } = req.query;
+    console.log('Auth request received with query:', req.query);
     
     if (!shop) {
       console.log('Missing shop parameter');
@@ -100,7 +109,7 @@ app.get("/auth", async (req, res) => {
     }
 
     // Validate shop format
-    if (!shop.match(/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/)) {
+    if (!shop.toString().match(/^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/)) {
       console.log('Invalid shop format:', shop);
       return res.status(400).json({ error: "Invalid shop format" });
     }
@@ -116,8 +125,13 @@ app.get("/auth", async (req, res) => {
       client_id: process.env.SHOPIFY_API_KEY || '',
       scope: 'write_discounts',
       redirect_uri: redirectUri,
-      state: Buffer.from(shop).toString('base64')
+      state: Buffer.from(shop.toString()).toString('base64')
     });
+
+    // Add Shopify parameters if they exist
+    if (hmac) params.append('hmac', hmac.toString());
+    if (host) params.append('host', host.toString());
+    if (timestamp) params.append('timestamp', timestamp.toString());
     
     const authUrl = `https://${shop}/admin/oauth/authorize?${params.toString()}`;
     console.log('Generated auth URL:', authUrl);
