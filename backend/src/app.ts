@@ -23,6 +23,19 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Basic test route
+app.get("/", (req, res) => {
+  res.json({
+    message: "Shopify Discount Popup API is running",
+    status: "ok",
+    endpoints: {
+      auth: "/auth",
+      callback: "/auth/callback",
+      discounts: "/discounts"
+    }
+  });
+});
+
 // Shopify OAuth routes
 app.get("/auth", async (req, res) => {
   const shop = req.query.shop as string;
