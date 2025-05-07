@@ -7,25 +7,38 @@ import dotenv from "dotenv";
 // Load environment variables from .env file
 dotenv.config();
 
+// Normalize host name by removing trailing slash
+const normalizeHostName = (hostName: string) => {
+  return hostName.replace(/\/$/, '');
+};
+
 // Log environment variables (without sensitive data)
 console.log('Environment loaded:', {
   hasApiKey: !!process.env.SHOPIFY_API_KEY,
   hasApiSecret: !!process.env.SHOPIFY_API_SECRET,
-  hostName: process.env.SHOPIFY_HOST_NAME
+  hostName: process.env.SHOPIFY_HOST_NAME,
+  nodeEnv: process.env.NODE_ENV
 });
 
-// Validate environment variables
+// Basic validation
 if (!process.env.SHOPIFY_API_KEY || !process.env.SHOPIFY_API_SECRET || !process.env.SHOPIFY_HOST_NAME) {
+  console.error('Missing environment variables:', {
+    hasApiKey: !!process.env.SHOPIFY_API_KEY,
+    hasApiSecret: !!process.env.SHOPIFY_API_SECRET,
+    hasHostName: !!process.env.SHOPIFY_HOST_NAME
+  });
   throw new Error('Missing required environment variables');
 }
+
+const normalizedHostName = normalizeHostName(process.env.SHOPIFY_HOST_NAME);
 
 const shopify = shopifyApi({
   apiKey: process.env.SHOPIFY_API_KEY,
   apiSecretKey: process.env.SHOPIFY_API_SECRET,
   scopes: ["write_discounts"],
-  hostName: process.env.SHOPIFY_HOST_NAME,
+  hostName: normalizedHostName,
   apiVersion: LATEST_API_VERSION,
-  isEmbeddedApp: false // Changed to false for testing
+  isEmbeddedApp: false
 });
 
 const app = express();
@@ -34,6 +47,14 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+
+// Add request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log('Headers:', req.headers);
+  console.log('Query:', req.query);
+  next();
+});
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -44,7 +65,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-// Basic test route
+// Basic route
 app.get("/", (req, res) => {
   console.log('Root route accessed');
   res.json({ 
@@ -52,6 +73,10 @@ app.get("/", (req, res) => {
     endpoints: {
       auth: "/auth",
       callback: "/auth/callback"
+    },
+    env: {
+      hostName: normalizedHostName,
+      nodeEnv: process.env.NODE_ENV
     }
   });
 });
@@ -61,9 +86,7 @@ app.get("/auth", async (req, res) => {
   try {
     const shop = req.query.shop as string;
     console.log('Auth request received for shop:', shop);
-    console.log('Request headers:', req.headers);
-    console.log('Request query:', req.query);
-
+    
     if (!shop) {
       console.log('Missing shop parameter');
       return res.status(400).json({ error: "Missing shop parameter" });
@@ -78,9 +101,20 @@ app.get("/auth", async (req, res) => {
     console.log('Starting auth process for shop:', shop);
     
     // Generate the authorization URL manually
-    const authUrl = `https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=write_discounts&redirect_uri=${process.env.SHOPIFY_HOST_NAME}/auth/callback&state=${Buffer.from(shop).toString('base64')}`;
+    const redirectUri = `${normalizedHostName}/auth/callback`;
+    console.log('Using redirect URI:', redirectUri);
     
+    // Build the authorization URL with proper encoding
+    const params = new URLSearchParams({
+      client_id: process.env.SHOPIFY_API_KEY || '',
+      scope: 'write_discounts',
+      redirect_uri: redirectUri,
+      state: Buffer.from(shop).toString('base64')
+    });
+    
+    const authUrl = `https://${shop}/admin/oauth/authorize?${params.toString()}`;
     console.log('Generated auth URL:', authUrl);
+    
     return res.redirect(authUrl);
   } catch (error) {
     console.error('Auth error:', error);
@@ -96,20 +130,22 @@ app.get("/auth", async (req, res) => {
 app.get("/auth/callback", async (req, res) => {
   try {
     console.log('Callback received with query:', req.query);
-    console.log('Callback headers:', req.headers);
-
+    
     const { code, shop, state } = req.query;
     
     if (!code || !shop) {
+      console.error('Missing parameters:', { code: !!code, shop: !!shop });
       throw new Error('Missing required parameters');
     }
 
     // Verify state
     const decodedState = Buffer.from(state as string, 'base64').toString();
     if (decodedState !== shop) {
+      console.error('Invalid state:', { received: decodedState, expected: shop });
       throw new Error('Invalid state parameter');
     }
 
+    console.log('Exchanging code for access token...');
     // Exchange code for access token
     const accessTokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
@@ -124,7 +160,13 @@ app.get("/auth/callback", async (req, res) => {
     });
 
     if (!accessTokenResponse.ok) {
-      throw new Error('Failed to get access token');
+      const errorText = await accessTokenResponse.text();
+      console.error('Access token response error:', {
+        status: accessTokenResponse.status,
+        statusText: accessTokenResponse.statusText,
+        body: errorText
+      });
+      throw new Error(`Failed to get access token: ${accessTokenResponse.statusText}`);
     }
 
     const { access_token } = await accessTokenResponse.json();
@@ -193,13 +235,25 @@ app.get("/auth/callback", async (req, res) => {
               margin: 0 auto;
             }
             h1 { color: #d82c0d; }
+            .error-details {
+              color: #666;
+              font-size: 0.9em;
+              margin-top: 20px;
+              text-align: left;
+              background: #f8f8f8;
+              padding: 10px;
+              border-radius: 4px;
+            }
           </style>
         </head>
         <body>
           <div class="container">
             <h1>Installation Failed</h1>
             <p>Please try again</p>
-            <p>Error: ${error instanceof Error ? error.message : 'Unknown error'}</p>
+            <div class="error-details">
+              <p><strong>Error:</strong> ${error instanceof Error ? error.message : 'Unknown error'}</p>
+              <p><strong>Stack:</strong> ${error instanceof Error ? error.stack : 'No stack trace'}</p>
+            </div>
           </div>
         </body>
       </html>
@@ -220,4 +274,8 @@ setDiscountRoutes(app);
 // Start the server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log('Environment:', {
+    NODE_ENV: process.env.NODE_ENV,
+    SHOPIFY_HOST_NAME: normalizedHostName
+  });
 });
