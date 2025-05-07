@@ -20,7 +20,7 @@ const shopify = shopifyApi({
   scopes: ["write_discounts"],
   hostName: process.env.SHOPIFY_HOST_NAME || "",
   apiVersion: LATEST_API_VERSION,
-  isEmbeddedApp: true,
+  isEmbeddedApp: true
 });
 
 const app = express();
@@ -77,6 +77,7 @@ app.get("/auth", async (req, res) => {
       callbackPath: "/auth/callback",
       isOnline: false,
       rawRequest: req,
+      rawResponse: res,
     });
     console.log('Auth route generated:', authRoute);
     return res.redirect(authRoute);
