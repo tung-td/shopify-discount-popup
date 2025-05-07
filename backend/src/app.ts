@@ -68,6 +68,13 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // Basic route
 app.get("/", (req, res) => {
   console.log('Root route accessed');
+  const shop = req.query.shop as string;
+  
+  if (shop) {
+    console.log('Redirecting to auth with shop:', shop);
+    return res.redirect(`/auth?shop=${shop}`);
+  }
+  
   res.json({ 
     message: "Shopify app is running",
     endpoints: {
